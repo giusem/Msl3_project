@@ -1,0 +1,620 @@
+---
+title: "Msl3 patients - HDACi treatment - DEgenes ctrl vs patients - reps 2 and 4"
+author: "Giuseppe Semplicio"
+date: "7/2/2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Part 1
+
+7.2.18		
+After some more thoughts, I decided to use only 2 replicates (rep2 and rep4, based on the Msl3 counts :-) ) so to avoid any questions in the submission. I do this because the results do not change much compared to merged reps1-3.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("UpSetR")
+library("xlsx")
+library("gplots")
+library("RColorBrewer")
+library("DESeq2")
+library("reshape2")
+```
+
+
+######Overlap with the DEgenes in the rep1-3 merged situation
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+new.degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+
+old.degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/03-DEseq_output_rep1-3merged/DESeq2.de_all.tsv", header = TRUE)
+
+
+degenes.merged = list(rep2_and_4 = new.degenes$gene_names, 
+											reps1to3merged_and_4 = old.degenes$gene_names)
+
+upset(fromList(degenes.merged), nsets = 6, order.by = "freq")
+
+```
+
+######GSEA rank files
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#rank files for Felicia for GSEA
+de_up = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_up.tsv", header = TRUE)
+gsea_up = data.frame(gene_names = de_up$gene_names, log2FC = de_up$log2FoldChange)
+gsea_up = gsea_up[order(gsea_up$log2FC, decreasing = TRUE),]
+gsea_up$rank = 1:nrow(gsea_up)
+gsea_up$log2FC <- NULL
+write.table(gsea_up, "de_up_ranked.rnk", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+write.xlsx2(x=gsea_up, file="de_up_ranked.xlsx", row.names = FALSE, col.names = FALSE)
+
+#############
+
+de_down = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_down.tsv", header = TRUE)
+gsea_down = data.frame(gene_names = de_down$gene_names, log2FC = de_down$log2FoldChange)
+gsea_down = gsea_down[order(gsea_down$log2FC, decreasing = FALSE),]
+gsea_down$rank = 1:nrow(gsea_down)
+gsea_down$log2FC <- NULL
+write.table(gsea_down, "de_down_ranked.rnk", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+write.xlsx2(x=gsea_down, file="de_down_ranked.xlsx", row.names = FALSE, col.names = FALSE)
+
+```
+
+
+
+######DEgenes - strength and distribution
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+new.degenes.rld = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.counts_rlog.tsv", header = TRUE)
+
+new.degenes.rld = new.degenes.rld[which(rownames(new.degenes.rld) %in% rownames(new.degenes)),]
+
+new.degenes.rld.rowmean = data.frame(control = rowMeans(new.degenes.rld[,c(1,2)]), patient = rowMeans(new.degenes.rld[,c(3,8)]))
+
+plotdata = melt(new.degenes.rld.rowmean)
+
+ggplot(plotdata, aes(x = variable, y = value, fill = variable)) +
+	geom_boxplot() +
+	ggtitle("mean rld control vs patient - DEgenes")
+
+ggplot(plotdata, aes(x = value, fill = variable)) +
+	geom_density(alpha = 0.2) +
+	theme_bw() +
+	ggtitle("mean rld control vs patient - DEgenes")
+
+plotdata %>% group_by(variable) %>% summarise(mean = mean(value), sd = sd(value))
+
+###### up only
+
+new.de.up = new.degenes[which(new.degenes$log2FoldChange>0),]
+
+de.up.rld = new.degenes.rld[which(rownames(new.degenes.rld) %in% rownames(new.de.up)),]
+
+de.up.rld.rowmean = data.frame(control = rowMeans(de.up.rld[,c(1,2)]), p1 = rowMeans(de.up.rld[,c(3,4)]), p11 = rowMeans(de.up.rld[,c(5,6)]), p2 = rowMeans(de.up.rld[,c(7,8)]))
+plotdata = melt(de.up.rld.rowmean)
+
+ggplot(plotdata, aes(x = variable, y = value, fill = variable)) +
+	geom_violin() +
+		ggtitle("mean rld control vs patient - DEgenes up")
+
+
+ggplot(plotdata, aes(x = value, fill = variable)) +
+	geom_density(alpha = 0.2) +
+	theme_bw() +
+	ggtitle("mean rld control vs patient - DEgenes up")
+
+plotdata %>% group_by(variable) %>% summarise(mean = mean(value), sd = sd(value))
+
+###### down only
+
+new.de.down = new.degenes[which(new.degenes$log2FoldChange<0),]
+
+de.down.rld = new.degenes.rld[which(rownames(new.degenes.rld) %in% rownames(new.de.down)),]
+
+de.down.rld.rowmean = data.frame(control = rowMeans(de.down.rld[,c(1,2)]), p1 = rowMeans(de.down.rld[,c(3,4)]), p11 = rowMeans(de.down.rld[,c(5,6)]), p2 = rowMeans(de.down.rld[,c(7,8)]))
+
+plotdata = melt(de.down.rld.rowmean)
+
+ggplot(plotdata, aes(x = variable, y = value, fill = variable)) +
+	geom_violin() +
+	ggtitle("mean rld control vs patient - DEgenes down")
+
+ggplot(plotdata, aes(x = value, fill = variable)) +
+	geom_density(alpha = 0.2) +
+	theme_bw() +
+	ggtitle("mean rld control vs patient - DEgenes down")
+
+plotdata %>% group_by(variable) %>% summarise(mean = mean(value), sd = sd(value))
+
+```
+######DEgenes upon Pano treatment?	
+
+Since I only used reps 2 and 4, I will do the same for the Pano treated samples.
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# normalized counts of control/patients - dmso/pano
+
+sampleInfo = read.table("sampleInfo_rep2-and-4_dmso_vs_pano.txt", header = TRUE)
+sampleInfo = data.frame(as.data.frame(unclass(sampleInfo)))
+sampleInfo = sampleInfo[order(sampleInfo$name, decreasing=F),]  # order by sample name
+
+countFilePath = ("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/counts.txt")
+
+countdata = read.table(countFilePath, header = TRUE)
+countdata = data.frame(countdata)
+
+#check: if names of the setup table are subset of the count matrix column names
+if ( ! all( is.element(sort(sampleInfo[,1]), sort(colnames(countdata))) ) ) {
+	cat("Error! Count table column names and setup table names do NOT match!\n")
+	print(as.character(sampleInfo[,1]))
+	print(colnames(countdata))
+	break
+	#quit(save = "no", status = 1, runLast = FALSE)   # Exit 1
+}
+
+countdata = countdata[,as.character(sampleInfo[,1])]
+
+#create DESeq dataset
+dds = DESeqDataSetFromMatrix(
+	countData = countdata,
+	colData = sampleInfo,
+	design = ~ condition)
+
+dds = DESeq(dds)
+
+rld = rlog(dds)
+write.table(assay(rld),"DESeq2.counts_rlog_dmso_pano_rep2and4.tsv", sep="\t", quote=FALSE, col.names=NA)
+
+```
+
+Now we look what happens to the DEgenes upon Pano treatment.
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+new.degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+
+new.de.up = new.degenes[which(new.degenes$log2FoldChange>0),]
+new.de.down = new.degenes[which(new.degenes$log2FoldChange<0),]
+
+##remove ".x" from ENSMUSG ID
+#rownames(new.de.up) = gsub("\\..*", "", rownames(new.de.up))
+#rownames(new.de.down) = gsub("\\..*", "", rownames(new.de.down))
+
+rld = read.table("DESeq2.counts_rlog_dmso_pano_rep2and4.tsv", header = TRUE)
+
+#remove ".x" from ENSMUSG ID
+#rownames(rld) = gsub("\\..*", "", rownames(rld))
+
+####################
+# prepare dictionary for ids to gene name conversion
+geneNamesFilePath = ("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/GRCh38_hg19_bioMart_nodup.tsv")
+
+
+geneNames = read.csv(geneNamesFilePath, sep="\t", header=F, stringsAsFactors=FALSE)
+geneNames = geneNames[!duplicated(geneNames[,1]),]
+rownames(geneNames) = geneNames[,1]
+geneNames[,1] = NULL
+
+## make a dictionary
+human_gene_names_dic = geneNames[[1]]
+names(human_gene_names_dic) = rownames(geneNames)
+##gene_names_dic["ENSMUSG00000025332"]
+
+
+## generate a dataframe from ids
+human_id_to_gene_name = function(ids) {
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = human_gene_names_dic[ as.character(d$IDs) ]
+
+	# some might be NAs; replace those by original ID
+	d[which(is.na(d$gene_names)),]$gene_names = as.character(d[which(is.na(d$gene_names)),]$IDs)
+	return(d$gene_name)
+}
+########################
+
+#add human readable gene names
+rld$gene_names = human_id_to_gene_name(rownames(rld))
+
+######################
+
+#select the DEgenes out of all the counts
+
+up_genes = rownames(new.de.up)
+down_genes = rownames(new.de.down)
+
+rld_up = rld[which(rownames(rld) %in% up_genes),]
+rld_down = rld[which(rownames(rld) %in% down_genes),]
+
+
+
+############################################################
+# heatmaps
+
+plotdata_up = rld_up
+#rownames(plotdata_up) = rld_up$gene_names
+
+plotdata_down = rld_down
+#rownames(plotdata_down) = rld_down$gene_names
+
+## cluster based on shape than
+###use 1 - pearson correlation co-efficient
+
+plotdata_up = plotdata_up[,c(1,2,5:ncol(plotdata_up))]
+hc_up = hclust(as.dist(1-cor(t(as.matrix(plotdata_up)), method = "pearson")))
+hc = hc_up 
+
+heatmap.2(as.matrix(plotdata_up), 
+					Rowv = as.dendrogram(hc), trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("UPregulated DEgenes - Pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+
+#cut in clusters
+plot(hc)
+
+cat("Cut the tree at height 1.2, to get 4 clusters")
+
+tree.cut <- cutree(hc, h=1.2)
+# Get the ids for clusters
+clust_up_1 <- which(tree.cut==1)
+clust_up_2 <- which(tree.cut==2)
+clust_up_3 <- which(tree.cut==3)
+clust_up_4 <- which(tree.cut==4)
+
+cat("when looking at the heatmap from top to bottom the order of the cluster is: 3-2-4-1")
+
+temp1 = data.frame(cluster = 1, genes = names(clust_up_1))
+temp2 = data.frame(cluster = 2, genes = names(clust_up_2))
+temp3 = data.frame(cluster = 3, genes = names(clust_up_3))
+temp4 = data.frame(cluster = 4, genes = names(clust_up_4))
+
+upgenes_clustered = rbind(temp1, temp2)
+upgenes_clustered = rbind(upgenes_clustered, temp3)
+upgenes_clustered = rbind(upgenes_clustered, temp4)
+
+rm(temp1, temp2, temp3, temp4)
+
+write.table(upgenes_clustered, "upgene_ids_clustered.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+rld_clust_up_1 = rld_up[which(rownames(rld_up) %in% names(clust_up_1)),]
+rld_clust_up_2 = rld_up[which(rownames(rld_up) %in% names(clust_up_2)),]
+rld_clust_up_3 = rld_up[which(rownames(rld_up) %in% names(clust_up_3)),]
+rld_clust_up_4 = rld_up[which(rownames(rld_up) %in% names(clust_up_4)),]
+
+temp1 = data.frame(hg19_id = rownames(rld_clust_up_1), gene_names = rld_clust_up_1$gene_names, cluster = 1)
+temp2 = data.frame(hg19_id = rownames(rld_clust_up_2), gene_names = rld_clust_up_2$gene_names, cluster = 2)
+temp3 = data.frame(hg19_id = rownames(rld_clust_up_3), gene_names = rld_clust_up_3$gene_names, cluster = 3)
+temp4 = data.frame(hg19_id = rownames(rld_clust_up_4), gene_names = rld_clust_up_4$gene_names, cluster = 4)
+
+upgenes_clustered = rbind(temp1, temp2)
+upgenes_clustered = rbind(upgenes_clustered, temp3)
+upgenes_clustered = rbind(upgenes_clustered, temp4)
+
+rm(temp1, temp2, temp3, temp4)
+
+############down genes
+plotdata_down = plotdata_down[,c(1,2,5:ncol(plotdata_down))]
+hc_down = hclust(as.dist(1-cor(t(as.matrix(plotdata_down)), method = "pearson")))
+hc = hc_down
+heatmap.2(as.matrix(plotdata_down), 
+					Rowv = as.dendrogram(hc), trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("Downregulated DEgenes - Pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+#cut in clusters
+plot(hc)
+cat("Cut the tree at height 1.2, to get 3 clusters")
+
+tree.cut <- cutree(hc, h=1.2)
+# Get the ids for clusters
+clust_down_1 <- which(tree.cut==1)
+clust_down_2 <- which(tree.cut==2)
+clust_down_3 <- which(tree.cut==3)
+
+cat("when looking at the heatmap from top to bottom the order of the cluster is: 2-3-1")
+
+temp1 = data.frame(cluster = 1, genes = names(clust_down_1))
+temp2 = data.frame(cluster = 2, genes = names(clust_down_2))
+temp3 = data.frame(cluster = 3, genes = names(clust_down_3))
+
+downgenes_clustered = rbind(temp1, temp2)
+downgenes_clustered = rbind(downgenes_clustered, temp3)
+
+rm(temp1, temp2, temp3)
+
+write.table(downgenes_clustered, "downgene_ids_clustered.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+rld_clust_down_1 = rld_down[which(rownames(rld_down) %in% names(clust_down_1)),]
+rld_clust_down_2 = rld_down[which(rownames(rld_down) %in% names(clust_down_2)),]
+rld_clust_down_3 = rld_down[which(rownames(rld_down) %in% names(clust_down_3)),]
+
+temp1 = data.frame(hg19_id = rownames(rld_clust_down_1), gene_names = rld_clust_down_1$gene_names, cluster = 1)
+temp2 = data.frame(hg19_id = rownames(rld_clust_down_2), gene_names = rld_clust_down_2$gene_names, cluster = 2)
+temp3 = data.frame(hg19_id = rownames(rld_clust_down_3), gene_names = rld_clust_down_3$gene_names, cluster = 3)
+
+downgenes_clustered = rbind(temp1, temp2)
+downgenes_clustered = rbind(downgenes_clustered, temp3)
+
+rm(temp1, temp2, temp3)
+
+
+### trends
+cat("seing that there is some variation between the patients we look whether the trend of the DEgenes is similar upon pano treatment")
+cat("for this, I am comparing the fold changes in the normalized counts between of the individual patients")
+
+trend_upgenes = data.frame(ctrl_dmso_pano_ratio = rowMeans(rld_up[,1:2]) - rowMeans(rld_up[,3:4]), p1_dmso_pano_ratio = rowMeans(rld_up[,5:6]) - rowMeans(rld_up[,7:8]), p11_dmso_pano_ratio = rowMeans(rld_up[,9:10]) - rowMeans(rld_up[,11:12]), p2_dmso_pano_ratio = rowMeans(rld_up[,13:14]) - rowMeans(rld_up[,15:16]))
+
+
+trend_downgenes = data.frame(ctrl_dmso_pano_ratio = rowMeans(rld_down[,1:2])- rowMeans(rld_down[,3:4]), p1_dmso_pano_ratio = rowMeans(rld_down[,5:6]) - rowMeans(rld_down[,7:8]), p11_dmso_pano_ratio = rowMeans(rld_down[,9:10]) - rowMeans(rld_down[,11:12]), p2_dmso_pano_ratio = rowMeans(rld_down[,13:14]) - rowMeans(rld_down[,15:16]))
+
+newplot = data.frame(dmso=rowMeans(rld_down[,5:6]), pano=rowMeans(rld_down[,7:8]), patient = "p1")
+newplot2 = data.frame(dmso=rowMeans(rld_down[,9:10]), pano=rowMeans(rld_down[,11:12]), patient = "p2")
+newplot3 = data.frame(dmso=rowMeans(rld_down[,13:14]), pano=rowMeans(rld_down[,15:16]), patient = "p3")
+#newplot4 = data.frame(dmso=rowMeans(rld_down[,1:2]), pano=rowMeans(rld_down[,3:4]), patient = "ctrl")
+
+#finalplot = rbind(newplot4, newplot)
+finalplot = rbind(newplot, newplot2)
+finalplot = rbind(finalplot, newplot3 )
+
+
+
+ggplot(finalplot, aes(x=dmso, y=pano, color = patient, size = 0.6)) + geom_point(alpha = 0.7) +
+	geom_abline(slope = 1, intercept = 0) +
+	scale_color_manual(values=c('#bdd7e7','#6baed6','#2171b5')) +
+	theme_classic()
+
+
+newplot = data.frame(dmso=rowMeans(rld_up[,5:6]), pano=rowMeans(rld_up[,7:8]), patient = "p1")
+newplot2 = data.frame(dmso=rowMeans(rld_up[,9:10]), pano=rowMeans(rld_up[,11:12]), patient = "p2")
+newplot3 = data.frame(dmso=rowMeans(rld_up[,13:14]), pano=rowMeans(rld_up[,15:16]), patient = "p3")
+#newplot4 = data.frame(dmso=rowMeans(rld_up[,1:2]), pano=rowMeans(rld_up[,3:4]), patient = "ctrl")
+
+#finalplot = rbind(newplot4, newplot)
+finalplot = rbind(newplot, newplot2)
+finalplot = rbind(finalplot, newplot3 )
+
+ggplot(finalplot, aes(x=dmso, y=pano, color = patient, size = 0.6)) + geom_point(alpha = 0.7) +
+	geom_abline(slope = 1, intercept = 0) +
+	scale_color_manual(values=c('#bd0026','#f03b20','#fd8d3c')) +
+	theme_classic()
+
+
+bla = melt(trend_downgenes)
+
+ggplot(bla, aes(x=variable, y=value, fill = variable)) + geom_boxplot()
+
+ggplot(bla, aes(value, fill = variable)) + geom_density(alpha = 0.1)
+#if ratio smaller then 1, pano treatment has higher counts than dmso treatment
+#if ratio higher then 1, dmso treatment has higher counts than pano treatment
+
+trend_upgenes[trend_upgenes<0] = -1
+trend_upgenes[trend_upgenes>0] = 1
+
+trend_upgenes[trend_upgenes < 1.1 & trend_upgenes > 0.9] = 0
+
+
+heatmap.2(as.matrix(trend_upgenes), 
+					Rowv = as.dendrogram(hc_up), trace = "none", scale = "none",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(2),
+					main=sprintf("Ratio-dmso over pano - UPgenes"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+trend_downgenes[trend_downgenes<= -0.3] = -1
+trend_downgenes[trend_downgenes>= 0.3] = 1
+
+trend_downgenes[trend_downgenes < 0.3 & trend_downgenes > -0.3] = 0
+
+heatmap.2(as.matrix(trend_downgenes), 
+					Rowv = as.dendrogram(hc_down), trace = "none", scale = "none",
+					col = c("blue", "white", "red"),
+					main=sprintf("Ratio-dmso over pano - DOWNgenes"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+```
+
+######Add mouse orthologues and OMIM numbers to DEgenes
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# add omim numbers
+####################
+
+omim = read.table("/data/akhtar/group/Giuseppe/supplementary/omim/HOM_MouseHumanSequence.tsv", header = TRUE, sep = "\t") #GRCh18.04
+omim = omim[which(omim$Common.Organism.Name == "human"),] #the entries are twice per gene - once for mouse and once for human - just need one
+omim = omim[,c(4,8)]
+omim$OMIM.Gene.ID = gsub("OMIM:", "", omim$OMIM.Gene.ID)
+colnames(omim) = c("gene_names", "omim_gene_id")
+#for whatever reason there is 1 duplicate entry (MIA2) which has once no omim id
+omim = omim[!duplicated(omim$gene_name),] #19123 entries left
+#and for another unknown reason there is one gene (KCNE1B) that has no omim entry, removing it
+#for whatever reason I can't remove the row based on the fact that the column is empty using: omim[which(omim$omim_gene_id == ""),]
+#so I remove the row based on the gene name
+omim = omim[which(!omim$gene_names == "KCNE1B"),]
+
+#compare with degenes annotation
+cat(new.degenes[which(new.degenes$gene_names %in% omim$gene_name),] %>% nrow, "out of", nrow(new.degenes), "DEgenes have a name in the omim database.\n The others are not in the table. Why not? I checked whether it could be an annotation issue as wwe used an older release for the mappping than the omim data. But I can find gene entries that are not assigned aslo in newer gtf files and also in the list downloaded from omim. (This omim data is from: http://www.informatics.jax.org/homology.shtml)\n So let's compare to the data table that I downloaded from the omim homepage")
+
+newomim = read.table("/data/akhtar/group/Giuseppe/supplementary/omim/omim_geneNames_demultiplexed.tsv", header = FALSE, sep = "\t")
+
+newomim = newomim[!duplicated(newomim$V2),] # no duplicate omim number entries but 29 duplicate genes entries and since we need unique gene names I remove the duplicate entries
+
+newomim = newomim[,c(2,1)]
+colnames(newomim) = c("gene_names", "omim_gene_id")
+
+cat(new.degenes[which(new.degenes$gene_names %in% newomim$gene_names),] %>% nrow, "out of", nrow(new.degenes), "entries were found in the downloaded omim database compared to the homologue one from before. So the homologue version has more. I will see whether after merging the two omim datasets we get more omim numbers for our DEgenes.")
+
+bothomim = full_join(omim, newomim, by = "gene_names")
+
+#I did not manage to do this in R so I did this in python.
+
+#write.table(bothomim, "bothomim.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+#I had to compare both omim lists to each other
+#total: 22342 entries
+#29 have different omim numbers for the same gene - I will discard them 
+#13274 entries have the same number in omim dataset 1 and 2 - take entry from omim
+#1480 entries only found in omim set - take entry from omim
+#3227 entries only found in newomim set - take entry from newomim
+#4333 entries have no omim numbers in both sets - discarded
+#output file: bothomim_merged.tsv
+
+#importing the new omim set
+
+mergedomim = read.table("bothomim_merged.tsv", header = FALSE, sep = "\t")
+
+cat(new.degenes[which(new.degenes$gene_names %in% mergedomim$V1),] %>% nrow, "out of", nrow(new.degenes),". I do not understand how this overlap can be smaller than the when using the first omim set only. Turns out that in the omim dataset not all missing values are labeled as NAs, some are just empty. That leads to wrong numbers and indeed the merged list has a stronger overlap. So I will take that. ")
+
+rownames(mergedomim) = mergedomim[,1]
+mergedomim[,1] = NULL
+
+## make a dictionary
+mergedomim_dic = mergedomim[[1]]
+names(mergedomim_dic) = rownames(mergedomim)
+
+new.degenes$omim_number = mergedomim_dic[as.character(new.degenes$gene_name)]
+
+#write.table(new.degenes[,c(7:8)], "degenes_mergedomim.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+#write.xlsx2(new.degenes[,c(7:8)], file="degenes_mergedomim.xlsx", row.names = FALSE, col.names = FALSE)
+
+#write.table(new.degenes[which(new.degenes$log2FoldChange>0),][,c(7:8)], "degenes_up_mergedomim.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+#write.xlsx2(new.degenes[which(new.degenes$log2FoldChange>0),][,c(7:8)], file="degenes_up_mergedomim.xlsx", row.names = FALSE, col.names = FALSE)
+
+#write.table(new.degenes[which(new.degenes$log2FoldChange<0),][,c(7:8)], "degenes_down_mergedomim.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+#write.xlsx2(new.degenes[which(new.degenes$log2FoldChange<0),][,c(7:8)], file="degenes_down_mergedomim.xlsx", row.names = FALSE, col.names = FALSE)
+
+
+####################
+
+
+
+# add mouse homologues
+####################
+geneNamesFilePath = ("/data/akhtar/group/Giuseppe/supplementary/biomart_gene_name/GRCh37-p13-release75-human-mouse-drosophila.tsv")
+
+geneNames = read.csv(geneNamesFilePath, sep="\t", header=T, stringsAsFactors=FALSE)
+geneNames = geneNames[!duplicated(geneNames[,1]),] #~9000 entries duplicated
+rownames(geneNames) = geneNames[,1]
+geneNames[,1] = NULL
+
+## make a dictionary
+gene_names_dic = geneNames[[1]]
+names(gene_names_dic) = rownames(geneNames)
+
+#add homologues to list with gene names and omim number
+new.degenes$mm_ortho = gene_names_dic[as.character(gsub("\\..*", "", rownames(new.degenes)))]
+####################
+```
+
+
+
+
+
+Non-DEgenes control vs patients
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+all_rld = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.counts_rlog.tsv", header = TRUE)
+
+degenes = rownames(new.degenes) #519 entries
+
+#remove the degenes from the rld table
+non_degenes = all_rld[which(!rownames(all_rld) %in% degenes),] #63049 entries
+
+#looking at min and max rld rowMeans of degenes we find a min of 0.66 and a max of 16.52, so I will select within the same range for the non-degenes
+non_degenes = non_degenes[which(rowMeans(non_degenes) > 0.5),] 
+non_degenes = non_degenes[which(rowMeans(non_degenes) < 17),] # 20036 entries left
+
+#check the distribution of non_degenes.rld
+#plot(density(rowMeans(non_degenes.rld))
+
+non_degenes = gsub("\\..*", "", rownames(non_degenes))
+
+non_degenes.rld = rld[which(rownames(rld) %in% non_degenes),]
+
+hc = hclust(as.dist(1-cor(t(as.matrix(non_degenes.rld[,1:ncol(non_degenes.rld)-1])), method = "pearson")))
+
+heatmap.2(as.matrix(non_degenes.rld[,1:ncol(non_degenes.rld)-1]), 
+					Rowv = as.dendrogram(hc), trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("Non-DEgenes - Pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+	
+```
+
+
+######Pretty Plots for Publication
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#heatmap of DEgenes
+de_total = read.table("../02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+d = data.frame(id=rownames(de_total), padj=de_total$padj)
+
+d_topx_padj = d[order(d$padj, decreasing=F),][1:100,]
+
+rld = read.table("../02-DEseq_output_rep2_and_4/DESeq2.counts_rlog.tsv", header = TRUE)
+plotdata = rld[as.character(d_topx_padj$id),] 
+
+### test
+setdiff(as.character(d_topx_padj$id), rownames(plotdata))
+
+if ( exists("gene_names_dic") ) rownames(plotdata) = human_id_to_gene_name(rownames(plotdata))
+
+#top 100 DEgenes
+pdf(sprintf("Top100_DEgenes.pdf"), pointsize = 9)
+heatmap.2(as.matrix(plotdata), scale="row", trace="none", dendrogram="both",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("Top 100 DE genes (by p-value)"),
+					margins = c(8,10), keysize = 1,
+					cexRow=0.5, cexCol=0.9, density.info="none")
+dev.off()
+
+hc = hclust(as.dist(1-cor(t(as.matrix(plotdata)), method = "pearson")))
+pdf(sprintf("Top100_DEgenes_pearson.pdf"), pointsize = 9)
+heatmap.2(as.matrix(plotdata), scale="row", trace="none", dendrogram="both",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("Top 100 DE genes (by p-value) - Pearson"),
+					margins = c(8,10), keysize = 1,
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+dev.off()
+#all DEgenes
+d = data.frame(id=rownames(de_total), padj=de_total$padj)
+
+plotdata = rld[as.character(d$id),] 
+
+rownames(plotdata) = human_id_to_gene_name(rownames(plotdata))
+
+pdf(sprintf("All_DEgenes.pdf"), pointsize = 9)
+heatmap.2(as.matrix(plotdata), scale="row", trace="none", dendrogram="both",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("All DE genes"),
+					margins = c(8,10), keysize = 1,
+					cexRow=0.5, cexCol=0.9, density.info="none")
+dev.off()
+
+hc = hclust(as.dist(1-cor(t(as.matrix(plotdata)), method = "pearson")))
+pdf(sprintf("All_DEgenes_pearson.pdf"), pointsize = 9)
+heatmap.2(as.matrix(plotdata), scale="row", trace="none", dendrogram="both",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("All DE genes - Pearson"),
+					margins = c(8,10), keysize = 1,
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+dev.off()
+
+bli = read.table("../../01-all-dmso-pano/DESeq2_output/rep2_rep4_dmso_vs_pano/DESeq2.de_all.tsv", header = TRUE)
+
+bli[which(bli$log2FoldChange>1),] %>% nrow()
+bli[which(bli$log2FoldChange<= -1),] %>% nrow()
+
+```

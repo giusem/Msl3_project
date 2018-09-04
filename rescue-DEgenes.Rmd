@@ -1,0 +1,314 @@
+---
+title: "Msl3 patients - HDACi treatment - Rescue DEgenes"
+author: "Giuseppe Semplicio"
+date: "12/2/2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Part 2
+
+Comparing the genes which are different in patients and controls and what happens upon PANO treatment
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("UpSetR")
+library("xlsx")
+library("gplots")
+library("RColorBrewer")
+library("DESeq2")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+dmso_degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+
+pano_degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/05-dmso_ctrl_vs_pano_patients/01-DEseq_output_rep2and4/DESeq2.de_all.tsv", header = TRUE)
+
+#export the DEseq2 output from the ctrl dmso vs patients pano treatment for the 519 DEgenes found in ctrl vs patients
+pano_degenes_all= read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/05-dmso_ctrl_vs_pano_patients/01-DEseq_output_rep2and4/DESeq2.results.tsv", header = TRUE)
+
+export = pano_degenes_all[which(rownames(pano_degenes_all) %in% rownames(dmso_degenes)),]
+
+#write.table(export, "newDEgenes_upon_PANO_treatment.tsv", row.names = TRUE, col.names = TRUE, quote = FALSE, sep = "\t")
+#write.xlsx2(export, file="newDEgenes_upon_PANO_treatment.xlsx", row.names = FALSE, col.names = TRUE)
+rm(export, pano_degenes_all)
+
+######
+
+
+dmso_degenes = data.frame(ids = rownames(dmso_degenes))
+pano_degenes = data.frame(ids = rownames(pano_degenes))
+
+degenes.merged = list(dmso = dmso_degenes$ids, 
+											pano = pano_degenes$ids)
+
+upset(fromList(degenes.merged), nsets = 6, order.by = "freq")
+
+cat("Not surprising, there are plenty of DEgenes upon PANO treatment. However, the intersting sets are the 403 DEgenes which even after PANO treatment still are different. These most likely represent a set of genes that are inheritantly different between individual human beings, based on geographic location, age, environment etc. The other 116 genes that are only different in patients in DMSO treatmeent but not anymore upon PANO treatment could be the one that need to be rescued to make the patients more like controls")
+
+
+#get the expression values for the DEgenes identified in DMSO for the ctrl(dmso) vs patient(pano)
+rld = read.table("01-DEseq_output_rep2and4/DESeq2.counts_rlog.tsv", header = TRUE)
+pano = read.table("01-DEseq_output_rep2and4/DESeq2.results.tsv", header = TRUE)
+
+pano = pano[which(rownames(pano) %in% dmso_degenes$ids),]
+dmso = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+
+dmso$id = rownames(dmso)
+pano$id = rownames(pano)
+dmso$log2FoldChange[is.na(dmso$log2FoldChange)] <- 0
+pano$log2FoldChange[is.na(pano$log2FoldChange)] <- 0
+
+merged = inner_join(dmso, pano, by = "id")
+merged = data.frame(row.names = merged$id, dmso_log2FoldChange = merged$log2FoldChange.x, dmso_padj = merged$padj.x, pano_log2FoldChange = merged$log2FoldChange.y, pano_padj = merged$padj.y)
+
+plotdata = data.frame(row.names = rownames(merged), DMSOpatients = merged$dmso_log2FoldChange, PANOpatients = merged$pano_log2FoldChange)
+heatmap.2(as.matrix(plotdata), 
+					trace = "none", scale = "none",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(10),
+					main=sprintf("DEgenes - DMSO and PANO"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+#find those gene that are not DE anymore in pano
+notDEanymore = merged[which(merged$dmso_padj < 0.05 & merged$pano_padj >= 0.05),] 
+cat(nrow(notDEanymore),"genes are not differentially expressed anymore upon PANO treatment.",nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange < 0),]),"were going down and", nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange > 0),]), "were going up.")
+#and those that are DE genes in both conditions
+constantDE = merged[which(merged$dmso_padj < 0.05 & merged$pano_padj < 0.05),] 
+cat(nrow(constantDE),"genes are differentially expressed upon DMSO or PANO treatment." ,nrow(constantDE[which(constantDE$dmso_log2FoldChange < 0 & constantDE$pano_log2FoldChange < 0),]),"go down in both and", nrow(constantDE[which(constantDE$dmso_log2FoldChange > 0 & constantDE$pano_log2FoldChange > 0),]), "go up in both.",nrow(constantDE[which(constantDE$dmso_log2FoldChange < 0 & constantDE$pano_log2FoldChange > 0),]),"are down in DMSO but up in PANO and",nrow(constantDE[which(constantDE$dmso_log2FoldChange > 0 & constantDE$pano_log2FoldChange < 0),]),"are up in DMSO and then down in PANO.")
+
+cat("about those DEgenes that aren't anymore upon PANO treatment. Do they fall into a specific cluster we defined previously for the DEgenes in DMSO ctrl vs patients?")
+
+downgenes_clustered = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/downgene_ids_clustered.tsv", header = TRUE, sep = "\t")
+
+upgenes_clustered = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/upgene_ids_clustered.tsv", header = TRUE, sep = "\t")
+
+plotdata = upgenes_clustered[which(upgenes_clustered$genes %in% rownames(notDEanymore)),]
+plotdata = factor(plotdata$cluster, 1:4)
+plotdata = as.data.frame(table(plotdata))
+
+ggplot(plotdata, aes(x=plotdata, y=Freq)) +
+	geom_bar(stat = "identity") +
+	ggtitle("Not upregulated genes anymore - which cluster?")
+
+plotdata = downgenes_clustered[which(downgenes_clustered$genes %in% rownames(notDEanymore)),]
+plotdata = factor(plotdata$cluster, 1:3)
+plotdata = as.data.frame(table(plotdata))
+
+ggplot(plotdata, aes(x=plotdata, y=Freq)) +
+	geom_bar(stat = "identity") +
+	ggtitle("Not downregulated genes anymore - which cluster?")
+
+
+summaryUP = data.frame(upgenes_clustered%>% group_by(cluster) %>% summarise(total_number = n()))
+temp = upgenes_clustered[which(upgenes_clustered$genes %in% rownames(notDEanymore)),] %>% group_by(cluster) %>% summarise(n = n())
+bla = data.frame(cluster = 1, n = 0)
+temp = rbind(bla, temp)
+summaryUP$notDEanymore = temp$n
+rm(temp, bla)
+summaryUP$percentage = round((100/summaryUP$total_number)*summaryUP$notDEanymore,1)
+
+summaryDOWN = data.frame(downgenes_clustered%>% group_by(cluster) %>% summarise(total_number = n()))
+temp = downgenes_clustered[which(downgenes_clustered$genes %in% rownames(notDEanymore)),] %>% group_by(cluster) %>% summarise(n = n())
+bla = data.frame(cluster = 3, n = 0)
+temp = rbind(bla, temp)
+summaryDOWN$notDEanymore = temp$n
+rm(temp)
+summaryDOWN$percentage = round((100/summaryDOWN$total_number)*summaryDOWN$notDEanymore,1)
+
+cat("how do the notDEanymore genes look like on a heatmap?")
+
+rld = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/01-all-dmso-pano/DESeq2_output/all-dmso-pano/DESeq2.counts_rlog.tsv", header = TRUE)
+
+rld = rld[,c(2,4,10,12,18,20,26,28,14,16,22,24,30,32)]
+rld = rld[which(rownames(rld) %in% rownames(notDEanymore)),]
+
+hc = hclust(as.dist(1-cor(t(as.matrix(rld)), method = "pearson")))
+
+heatmap.2(as.matrix(rld), 
+					Rowv = as.dendrogram(hc), Colv = FALSE, trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(10),
+					main=sprintf("notDEanymore - dmso vs pano - pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "row")
+
+
+##############
+#sidenote
+#does a rowmean even make sense? because the mean is taken form 14 samples of which only 2 are controls
+#wouldn't it be better to display the log2FC wrt the mean ctrl dmso?
+
+rld_fc = rld-(rowMeans(rld[,1:2]))
+
+heatmap.2(as.matrix(rld_fc), 
+					Rowv = as.dendrogram(hc), Colv = FALSE, trace = "none", scale = "none",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("notDEanymore - dmso vs pano - pearson - rlogFC"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "row")
+#end sidenote
+###############
+
+
+temp1 = data.frame(row.names = rownames(rld), control = rowMeans(rld[,c(1,2)]), patient = rowMeans(rld[,c(3,4,7,8,11,12)]), treatment = "DMSO")
+temp2 = data.frame(row.names = rownames(rld), control = rowMeans(rld[,c(1,2)]), patient = rowMeans(rld[,c(5,6,9,10,13,14)]), treatment = "Pano")
+plotdata = rbind(temp1, temp2)
+rm(temp1,temp2)
+
+ggplot(plotdata, aes(x=control, y=patient, colour = treatment)) +
+	scale_colour_manual(values = c("darkgrey", "darkblue")) +
+	geom_point() +
+	xlim(0,16) + ylim(0,16) +
+	geom_abline(color="black", slope = 1, intercept = 0) +
+	theme_bw()
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#export for Felicia
+
+ggplot(plotdata, aes(x=control, y=patient, colour = treatment)) +
+	scale_colour_manual(values = c("darkgrey", "darkblue")) +
+	geom_point() +
+	xlim(0,16) + ylim(0,16) +
+	geom_abline(color="black", slope = 1, intercept = 0) +
+	theme_bw()
+ggsave(file=sprintf("notDEanymore_rld.pdf"), dpi = 300)
+
+#add human readable gene names
+
+# prepare dictionary for ids to gene name conversion
+geneNamesFilePath = ("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/GRCh38_hg19_bioMart_nodup.tsv")
+
+
+geneNames = read.csv(geneNamesFilePath, sep="\t", header=F, stringsAsFactors=FALSE)
+geneNames = geneNames[!duplicated(geneNames[,1]),]
+rownames(geneNames) = geneNames[,1]
+geneNames[,1] = NULL
+
+## make a dictionary
+gene_names_dic = geneNames[[1]]
+names(gene_names_dic) = rownames(geneNames)
+##gene_names_dic["ENSMUSG00000025332"]
+
+
+## generate a dataframe from ids
+id_to_gene_name = function(ids) {
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = gene_names_dic[ as.character(d$IDs) ]
+
+	# some might be NAs; replace those by original ID
+	d[which(is.na(d$gene_names)),]$gene_names = as.character(d[which(is.na(d$gene_names)),]$IDs)
+	return(d$gene_name)
+}
+########################
+
+#add human readable gene names
+merged$gene_names = id_to_gene_name(rownames(merged))
+notDEanymore$gene_names = id_to_gene_name(rownames(notDEanymore))
+
+#add omim number for julien
+mergedomim = read.table("../02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/bothomim_merged.tsv", header = FALSE, sep = "\t")
+
+rownames(mergedomim) = mergedomim[,1]
+mergedomim[,1] = NULL
+
+## make a dictionary
+mergedomim_dic = mergedomim[[1]]
+names(mergedomim_dic) = rownames(mergedomim)
+
+notDEanymore$omim_number = mergedomim_dic[as.character(notDEanymore$gene_names)]
+
+write.table(notDEanymore, "notDEanymore_log2FC.tsv", row.names = TRUE, col.names = TRUE, quote = FALSE, sep = "\t")
+write.xlsx2(notDEanymore, file="notDEanymore_log2FC.xlsx", row.names = FALSE, col.names = TRUE)
+
+######################
+
+#the genes that completely changed direction
+newup = constantDE[which(constantDE$dmso_log2FoldChange < 0 & constantDE$pano_log2FoldChange > 0),]
+newdown = constantDE[which(constantDE$dmso_log2FoldChange > 0 & constantDE$pano_log2FoldChange < 0),]
+
+newup$gene_names = id_to_gene_name(rownames(newup))
+newdown$gene_names = id_to_gene_name(rownames(newdown))
+
+newup$omim_number = mergedomim_dic[as.character(newup$gene_names)]
+newdown$omim_number = mergedomim_dic[as.character(newdown$gene_names)]
+
+write.table(newup, "new_up_in_pano.tsv", row.names = TRUE, col.names = TRUE, quote = FALSE, sep = "\t")
+write.xlsx2(newup, file="new_up_in_pano.xlsx", row.names = FALSE, col.names = TRUE)
+
+write.table(newdown, "new_down_in_pano.tsv", row.names = TRUE, col.names = TRUE, quote = FALSE, sep = "\t")
+write.xlsx2(newdown, file="new_down_in_pano.xlsx", row.names = FALSE, col.names = TRUE)
+
+```
+
+######SPIA
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+## SPIA
+library("SPIA")
+
+entrez = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/ensemble_entrez.tsv", header = TRUE, sep = "\t", fill = TRUE)
+entrez = entrez[which(!entrez$EntrezGeneID == "NA"),]
+entrez = entrez[!duplicated(entrez$EntrezGeneID),]
+
+#df <- read.table("DESeq2.de_all.tsv", sep= "\t", header = TRUE, quote = "" )
+df = notDEanymore
+rownames(df) = gsub("\\..*", "", rownames(df))
+
+df_entrez = merge(x = df, y = entrez, by.x = "row.names", by.y ="EnsemblGeneID")
+df_entrez = df_entrez[order(df_entrez$dmso_log2FoldChange, decreasing = TRUE), ]
+df.map = df_entrez$dmso_log2FoldChange
+names(df.map) = as.vector(df_entrez$EntrezGeneID)
+
+countFilePath = ("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/counts.txt")
+countdata = read.table(countFilePath, header = TRUE)
+countdata = data.frame(countdata)
+
+countdata_colnames = as.data.frame(gsub("\\..*", "", row.names(countdata)))
+colnames(countdata_colnames) = c("EnsemblGeneID")
+allgenes_entrez= merge(x = entrez, y = countdata_colnames, by.x = "EnsemblGeneID", by.y = "EnsemblGeneID")
+allgenes.map = as.character(allgenes_entrez$EntrezGeneID)
+#source("http://bioconductor.org/biocLite.R")
+#biocLite("SPIA")
+#runSPIA
+
+#A data frame containing the ranked pathways and various statistics: pSize is the number of genes
+#on the pathway; NDE is the number of DE genes per pathway; tA is the observed total preturbation
+#accumulation in the pathway; pNDE is the probability to observe at least NDE genes on the pathway
+#using a hypergeometric model; pPERT is the probability to observe a total accumulation more extreme
+#than tA only by chance; pG is the p-value obtained by combining pNDE and pPERT; pGFdr and
+#pGFWER are the False Discovery Rate and respectively Bonferroni adjusted global p-values; and the
+#Status gives the direction in which the pathway is perturbed (activated or inhibited). KEGGLINK
+#gives a web link to the KEGG website that displays the pathway image with the differentially expressed
+#genes highlighted in red.
+
+spia.degenes = spia(df.map, allgenes.map, organism = "hsa", nB = 2000)
+spia.degenes$Name = substr(spia.degenes$Name,1,20)
+
+spia.degenes = spia.degenes[order(spia.degenes$pGFWER),]
+plotP(spia.degenes,threshold=0.4)
+
+all.spia = spia.degenes[c(1:5,7,9,11)]
+#top10 pathways
+top.spia = spia.degenes[1:10, c(1:5,7,9,11)]
+colnames(top.spia) <- c("Name",colnames(top.spia[2:8]))
+
+top.spia$pGFdr <- -log10(top.spia$pGFdr)
+
+
+ggplot(top.spia,aes(Name,pGFdr,fill = Status, size = pSize, label = Name)) +
+	geom_point(alpha = 0.7, shape = 21) +
+	scale_size_area(max_size = 15) + theme_bw(base_size = 15) +
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+	scale_fill_manual(values = c("forestgreen","Red")) +
+	labs(x = "Pathways", y = "-log10(p-value)",fill = "Status", title = "SPIA - Top 10 pathways")
+
+ggsave(file=sprintf("Fig11-SPIA.pdf"), width=13, height=6)
+
+```

@@ -1,0 +1,171 @@
+---
+title: "Msl3 patients - HDACi treatment - The rescued genes"
+author: "Giuseppe Semplicio"
+date: "2/4/2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Part 2
+
+Comparing the DEgenes in DMSO treatment - control vs patients (reps 2 and 4) to the DEgenes in PANO treatment - control vs patients (reps	2 and 4)
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("UpSetR")
+library("xlsx")
+library("gplots")
+library("RColorBrewer")
+library("DESeq2")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+dmso_degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE)
+dmso_degenes = data.frame(ids = rownames(dmso_degenes))
+
+pano_degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/04-pano_ctrl_vs_patients/01-DEseq_output_rep2and4/DESeq2.de_all.tsv", header = TRUE)
+pano_degenes = data.frame(ids = rownames(pano_degenes))
+
+degenes.merged = list(dmso = dmso_degenes$ids, 
+											pano = pano_degenes$ids)
+
+upset(fromList(degenes.merged), nsets = 6, order.by = "freq")
+
+cat("Let's assume that the 280 genes that are differentially expressed in DMSO as well as upon PANO treatment are differences between the idividuals. Because of gographical reasons, environment or age or basically anything that makes each of us unique. Now there are 259 genes which are different in patients under DMSO conditions and there are 208 upon PANO treatment. So something happened and what we are looking now for is to find a group of genes that used to be different between patients and control (e.g. the genes making you sick) and now aren't (the cured genes).")
+
+#get all DEgenes from both sets
+alldegenes = full_join(dmso_degenes, pano_degenes, by = "ids")
+alldegenes = alldegenes$ids
+
+#get the expression values for the genelist
+dmso_all = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.results.tsv", header = TRUE)
+
+pano_all = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/04-pano_ctrl_vs_patients/01-DEseq_output_rep2and4/DESeq2.results.tsv", header = TRUE)
+
+dmso_all = dmso_all[which(rownames(dmso_all) %in% alldegenes),]
+pano_all = pano_all[which(rownames(pano_all) %in% alldegenes),]
+
+dmso_all$id = rownames(dmso_all)
+dmso_all$log2FoldChange[is.na(dmso_all$log2FoldChange)] <- 0
+
+pano_all$id = rownames(pano_all)
+pano_all$log2FoldChange[is.na(pano_all$log2FoldChange)] <- 0
+
+plotdata = inner_join(dmso_all, pano_all, by = "id")
+plotdata = data.frame(row.names = plotdata$gene_names.x, dmso = plotdata$log2FoldChange.x, pano = plotdata$log2FoldChange.y)
+
+heatmap.2(as.matrix(plotdata), 
+					trace = "none", scale = "none",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("DEgenes - DMSO and PANO"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+merged = inner_join(dmso_all, pano_all, by = "id")
+merged = data.frame(row.names = merged$id, dmso_log2FoldChange = merged$log2FoldChange.x, dmso_padj = merged$padj.x, pano_log2FoldChange = merged$log2FoldChange.y, pano_padj = merged$padj.y)
+
+#find those gene that are not DE anymore in pano
+notDEanymore = merged[which(merged$dmso_padj < 0.05 & merged$pano_padj >= 0.05),] 
+cat(nrow(notDEanymore),"genes are not differentially expressed anymore upon PANO treatment.",nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange < 0),]),"were going down and", nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange > 0),]), "were going up.")
+#and those that are now after PANO treatment DEgenes
+newDEnow = merged[which(merged$dmso_padj >= 0.05 & merged$pano_padj < 0.05),] 
+cat(nrow(newDEnow),"genes are now differentially expressed upon PANO treatment.",nrow(newDEnow[which(newDEnow$pano_log2FoldChange < 0),]),"are going down and", nrow(newDEnow[which(newDEnow$pano_log2FoldChange > 0),]), "are going up.")
+#and those that are DE genes in both conditions
+constantDE = merged[which(merged$dmso_padj < 0.05 & merged$pano_padj < 0.05),] 
+cat(nrow(constantDE),"genes are differentially expressed upon DMSO or PANO treatment. They all move in the same direction (no gene is going up in one condition and then down, or vice versa)",nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange < 0),]),"go down and", nrow(notDEanymore[which(notDEanymore$dmso_log2FoldChange > 0),]), "go up.")
+#there are no entries where at both times the padj was > 0.05 (which is how it has to be for this dataset)
+
+
+#about those DEgenes that aren't anymore upon PANO treatment. Do they fall into a specific cluster we defined previously for the DEgenes in DMSO ctrl vs patients?
+
+downgenes_clustered = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/downgene_ids_clustered.tsv", header = TRUE, sep = "\t")
+
+upgenes_clustered = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/upgene_ids_clustered.tsv", header = TRUE, sep = "\t")
+
+ggplot(upgenes_clustered[which(upgenes_clustered$genes %in% rownames(notDEanymore)),], aes(x=cluster)) +
+	geom_bar() +
+	ggtitle("Not upregulated genes anymore - which cluster?")
+
+ggplot(downgenes_clustered[which(downgenes_clustered$genes %in% rownames(notDEanymore)),], aes(x=cluster)) +
+	geom_bar() +
+	ggtitle("Not downregulated genes anymore - which cluster?")
+
+
+summaryUP = data.frame(upgenes_clustered%>% group_by(cluster) %>% summarise(total_number = n()))
+temp = upgenes_clustered[which(upgenes_clustered$genes %in% rownames(notDEanymore)),] %>% group_by(cluster) %>% summarise(n = n())
+summaryUP$notDEanymore = temp$n
+rm(temp)
+summaryUP$percentage = round((100/summaryUP$total_number)*summaryUP$notDEanymore,1)
+
+summaryDOWN = data.frame(downgenes_clustered%>% group_by(cluster) %>% summarise(total_number = n()))
+temp = downgenes_clustered[which(downgenes_clustered$genes %in% rownames(notDEanymore)),] %>% group_by(cluster) %>% summarise(n = n())
+summaryDOWN$notDEanymore = temp$n
+rm(temp)
+summaryDOWN$percentage = round((100/summaryDOWN$total_number)*summaryDOWN$notDEanymore,1)
+
+#how to the notDEanymore genes look like on a heatmap?
+rld = read.table("../../02-dmso_ctrl_vs_patients/05-downstream_of_DEseq_output_rep2_and_4/DESeq2.counts_rlog_dmso_pano_rep2and4.tsv", header = TRUE)
+
+rld = rld[which(rownames(rld) %in% rownames(notDEanymore)),]
+
+hc = hclust(as.dist(1-cor(t(as.matrix(rld)), method = "pearson")))
+heatmap.2(as.matrix(rld), 
+					Rowv = as.dendrogram(hc), Colv = FALSE, trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("notDEanymore - dmso vs pano - pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "row")
+
+rld_up = rld[which(rownames(rld) %in% up_genes),]
+rld_down = rld[which(rownames(rld) %in% down_genes),]
+
+
+plotdata_up = rld_up[,1:ncol(rld_up)-1]
+#rownames(plotdata_up) = rld_up$gene_names
+
+plotdata_down = rld_down[,1:ncol(rld_down)-1]
+#rownames(plotdata_down) = rld_down$gene_names
+
+## cluster based on shape than
+###use 1 - pearson correlation co-efficient
+
+plotdata_up = plotdata_up[,c(1,2,5:ncol(plotdata_up))]
+hc = hclust(as.dist(1-cor(t(as.matrix(plotdata_up)), method = "pearson")))
+
+heatmap.2(as.matrix(plotdata_up), 
+					Rowv = as.dendrogram(hc), trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("UPregulated DEgenes - Pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "both")
+
+
+
+
+
+
+dmso_degenes = dmso_degenes[,c(2,7)]
+pano_degenes = pano_degenes[,c(2,7)]
+
+degenes.log2fc = full_join(dmso_degenes, pano_degenes, by = "gene_names")
+colnames(degenes.log2fc) = c("dmso_log2FC", "gene_names", "pano_log2FC")
+
+degenes.log2fc[["dmso_log2FC"]][is.na(degenes.log2fc[["dmso_log2FC"]])] <- 0  #exchange the NA in the log2FC columns with 0
+
+degenes.log2fc[["pano_log2FC"]][is.na(degenes.log2fc[["pano_log2FC"]])] <- 0  #exchange the NA in the log2FC columns with 0
+
+
+ggplot(degenes.log2fc, aes(x=dmso_log2FC, y=pano_log2FC)) +
+	geom_point(alpha = 0.5) +
+	scale_x_log10() + scale_y_log10() +
+	geom_abline(color="red", slope = 1, intercept = 0)
+```

@@ -1,0 +1,105 @@
+#####
+
+#now we want to get a list of intergenic peaks and their closest gene up- and downstream -  again, only on protein coding genes
+
+####
+
+#fist need the bed files sorted
+
+for i in TomeksData_Peaks/*.bed; do sort -k1,1 -k2,2n $i > ${i%.bed}_sorted.bed; done
+
+sort -k1,1 -k2,2n GRCm37_release67_coding_genes_plus1KBupstream.bed | awk '{print"chr"$0}' > GRCm37_release67_coding_genes_plus1KBupstream_chr_sorted.bed
+
+####
+
+#the results will be put into a new folder
+
+mkdir intersect_chip_TSS_genes_distal/distal
+
+cd intersect_chip_TSS_genes_distal/distal
+
+####
+
+# closestBED
+# can not use -io option because ignoring overlaps means that it will look for a close region even if it would have had an overlap
+# however printing the distance -d will give a value of 0 for overlaps - so I can filter on that
+# since I want to get the closest up and downstram protein coding gene, I have to run it twice, once ignoring upstream -iu and once ignoring downstream -id genes (a positive distance values means the peak was upstream of the gene, a negative one means the peak is downstream of the gene)
+#there a few peaks that are at the end of a chr and won't have a closest up- or downstream gene assigned, those have a "." where the chr of the gene would be - filter on that3
+
+for i in ../../TomeksData_Peaks/*_sorted.bed; do base=$(basename $i); closestBed -a $i -b ../../GRCm37_release67_coding_genes_plus1KBupstream_chr_sorted.bed -D a -iu > ${base%.bed}_temp.tsv; done
+
+
+#filter for uniq MACS_peaks, since some have been overlapping with multiple entries
+
+for i in *temp.tsv; do sort -u -k4,4 $i | sort -k1,1 -k2,2n > ${i%_temp.tsv}_temp2.tsv; done
+
+rm *temp.tsv
+
+#filter for closest but not overlapping
+
+for i in *temp2.tsv; do awk '{if($10!=0)print$0}' $i > ${i%_temp2.tsv}_temp3.tsv; done
+
+rm *temp2.tsv
+
+#filter those peaks at the end of chromosomes
+
+for i in *temp3.tsv; do awk '{if($6!=".") print$0}' $i > ${i%_sorted_temp3.tsv}_closest_downstream.tsv; done
+
+rm *temp3.tsv
+
+###
+
+#the same for the upstream genes
+
+for i in ../../TomeksData_Peaks/*_sorted.bed; do base=$(basename $i); closestBed -a $i -b ../../GRCm37_release67_coding_genes_plus1KBupstream_chr_sorted.bed -D a -id > ${base%.bed}_temp.tsv; done
+
+
+#filter for uniq MACS_peaks, since some have been overlapping with multiple entries
+
+for i in *temp.tsv; do sort -u -k4,4 $i | sort -k1,1 -k2,2n > ${i%_temp.tsv}_temp2.tsv; done
+
+rm *temp.tsv
+
+#filter for closest but not overlapping
+
+for i in *temp2.tsv; do awk '{if($10!=0)print$0}' $i > ${i%_temp2.tsv}_temp3.tsv; done
+
+rm *temp2.tsv
+
+#filter those peaks at the end of chromosomes
+
+for i in *temp3.tsv; do awk '{if($6!=".") print$0}' $i > ${i%_sorted_temp3.tsv}_closest_upstream.tsv; done
+
+rm *temp3.tsv
+
+
+###
+
+#also making a file with the closest gene (irrespective whether up- or downstream)
+
+for i in ../../TomeksData_Peaks/*_sorted.bed; do base=$(basename $i); closestBed -a $i -b ../../GRCm37_release67_coding_genes_plus1KBupstream_chr_sorted.bed -D a  > ${base%.bed}_temp.tsv; done
+
+
+#filter for uniq MACS_peaks, since some have been overlapping with multiple entries
+
+for i in *temp.tsv; do sort -u -k4,4 $i | sort -k1,1 -k2,2n > ${i%_temp.tsv}_temp2.tsv; done
+
+rm *temp.tsv
+
+#filter for closest but not overlapping
+
+for i in *temp2.tsv; do awk '{if($10!=0)print$0}' $i > ${i%_temp2.tsv}_temp3.tsv; done
+
+rm *temp2.tsv
+
+#filter those peaks at the end of chromosomes
+
+for i in *temp3.tsv; do awk '{if($6!=".") print$0}' $i > ${i%_sorted_temp3.tsv}_closest.tsv; done
+
+rm *temp3.tsv
+
+###
+
+
+#back to R
+

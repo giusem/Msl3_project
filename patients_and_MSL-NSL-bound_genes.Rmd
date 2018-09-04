@@ -1,0 +1,731 @@
+---
+title: "Msl3 patients - HDACi treatment - ChIPseq correlation"
+author: "Giuseppe Semplicio"
+date: "2/16/2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Part 3
+
+How do the genes that are bound by MSL or NSL behave in our RNAseq of patients?
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("UpSetR")
+library("xlsx")
+library("gplots")
+library("RColorBrewer")
+library("DESeq2")
+library("reshape2")
+library("ggrepel") #extends ggplot labels to prettier version
+
+```
+###Paths to files
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#mouse and drosophila orthologues - GRCh37-p13-release75
+ortho_file_path = "/data/akhtar/group/Giuseppe/supplementary/biomart_gene_name/GRCh37-p13-release75-human-mouse-drosophila.tsv"
+#DEseq2 DEgenes output ctrl vs patient (rep2 and rep4)
+degenes_path = "/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv"
+#DEseq2 complete output ctrl vs patient (rep2 and rep4)
+deseq_results_path = "/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.results.tsv"
+#path to the MACS peaks overlap with TSS or genes
+input_path = "/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/intersect_chip_TSS_genes_distal/"
+#closest up- or downstream MACS peaks path
+input_distal_path = "/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/intersect_chip_TSS_genes_distal/distal/"
+
+human_id_gene_name_path = "/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/GRCh38_hg19_bioMart_nodup.tsv"
+```
+
+###The functions
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+import_peaks.function = function(files, path){
+	peak.list = list()
+	for (i in 1:length(files)){
+		peak.list[[i]]<-read.csv(file.path(path, files[i]), sep = "\t", header = FALSE)
+	}
+	names(peak.list) = gsub("\\..*", "", files)
+	return(peak.list)
+}
+
+human_id_to_mouse_id = function(ids) {
+	ortho = read.table(ortho_file_path, header = TRUE, sep = "\t", na.strings=c("","NA")) 
+	ortho = ortho[!duplicated(ortho[,1]),]#~9000 duplicate entries
+	rownames(ortho) = ortho[,1]
+	ortho[,1] = NULL
+
+	ortho_gene_names_dic = ortho[[1]]
+	names(ortho_gene_names_dic) = rownames(ortho)
+	
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = ortho_gene_names_dic[ as.character(d$IDs) ]
+}
+
+mouse_id_to_human_id = function(ids) {
+	ortho = read.table(ortho_file_path, header = TRUE, sep = "\t", na.strings=c("","NA")) 
+	ortho = ortho[!duplicated(ortho[,2]),]
+	ortho = ortho[!is.na(ortho$Mouse.Ensembl.Gene.ID),]
+	rownames(ortho) = ortho[,2]
+	ortho[,2] = NULL
+
+	ortho_gene_names_dic = ortho[[1]]
+	names(ortho_gene_names_dic) = rownames(ortho)
+	
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = ortho_gene_names_dic[ as.character(d$IDs) ]
+}
+
+human_id_to_human_gene_name = function(ids) {
+	human_gene_names = read.csv(human_id_gene_name_path, sep="\t", header=F, stringsAsFactors=FALSE)
+	human_gene_names = human_gene_names[!duplicated(human_gene_names[,1]),]
+	rownames(human_gene_names) = human_gene_names[,1]
+	human_gene_names[,1] = NULL
+
+	human_gene_names_dic = human_gene_names[[1]]
+	names(human_gene_names_dic) = rownames(human_gene_names)
+	
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = human_gene_names_dic[ as.character(d$IDs) ]
+} 
+
+human_gene_name_to_human_id = function(ids) {
+	human_gene_names = read.csv(human_id_gene_name_path, sep="\t", header=F, stringsAsFactors=FALSE)
+	human_gene_names = human_gene_names[!duplicated(human_gene_names[,2]),]
+	rownames(human_gene_names) = human_gene_names[,2]
+	human_gene_names[,2] = NULL
+
+	human_gene_names_dic = human_gene_names[[1]]
+	names(human_gene_names_dic) = rownames(human_gene_names)
+	
+	d = data.frame(IDs=gsub("\\..*", "", ids), gene_names=NA)
+	d$gene_names = human_gene_names_dic[ as.character(d$IDs) ]
+} 
+
+
+
+```
+
+####MSL/NSL bound genes at TSS - expression levels
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+new.degenes = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.de_all.tsv", header = TRUE) #the DEgenes of patients vs control
+deseq.results = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.results.tsv", header = TRUE) #DEseq output of patients vs control (all genes)
+
+#add the mouse orthologues to the deseq.results
+
+
+deseq.results$mouse_ID = human_id_to_mouse_id(rownames(deseq.results)) #~42k of 63k entries have no assigned mouseID 
+new.degenes$mouse_ID = human_id_to_mouse_id(rownames(new.degenes))#94 entries out of 519 have no assigned mouseID
+
+
+### get the deseq.results genes that overlap with chip
+#From Galaxy/Friederikes data; get the lists of genes which had a peak at TSS +/-1kb
+bound_genes_files = list.files("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/Tomek_ChIP_TSS_overlap_genes_from_Friederike/", pattern = "*.tsv")
+
+bound.list = list()
+#read the tsv files into a list
+for (i in 1:length(bound_genes_files)){
+	bound.list[[i]]<-read.csv(file.path("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/Tomek_ChIP_TSS_overlap_genes_from_Friederike/", bound_genes_files[i]), sep = "\t", header = FALSE)
+}
+#add name to the elements in list
+names(bound.list) = c("MCRS1_mlES", "MOF_mlES", "MOF_mlNPC", "MSL1_mlES", "MSL2_mlES", "MSL2_mlNPC", "NSL3_mlES", "NSL3_mlNPC")
+#count rows for each list element
+cat("Number of TSSs bound by individual MSL/NSL members")
+sapply(bound.list, function(x) nrow(x)) #count number of genes in each chip
+#get only those genes that have a peak in the individual chips
+deseq_bound_genes.list = list()
+deseq_bound_genes.list = lapply(bound.list, function(x) {deseq.results[which(deseq.results$mouse_ID %in% x$V1),]})
+#count rows for each list element
+cat("Number of TSSs bound by individual MSL/NSL members where a human orthologue could be identified")
+sapply(deseq_bound_genes.list, function(x) nrow(x))
+#add a column with the name of the list element
+for (i in 1:length(deseq_bound_genes.list)){
+	deseq_bound_genes.list[[i]]$bound_by = names(deseq_bound_genes.list[i])
+}
+
+temp = lapply(deseq_bound_genes.list, function(x) {x[,c(2,9)]})
+
+plotdata = do.call(rbind,temp)
+rm(temp)
+
+plotdata = plotdata[which(!is.na(plotdata$log2FoldChange)),]
+
+ggplot(plotdata, aes(x = bound_by, y = log2FoldChange, fill = bound_by)) +
+	geom_boxplot() +
+	ggtitle("log2FC ctr vs patients - bound genes")
+
+cat("The mean and sd of log2FC of the individual ChIP categories")
+plotdata %>% group_by(bound_by) %>% summarise(mean = mean(log2FoldChange), sd = sd(log2FoldChange))
+
+
+```
+
+
+#####Which mouse genes have a ChIP peak at TSS, at gene body or distal? 
+
+update 20180301:		
+we will focus on protein_coding genes only (see 02-get_coding_genes_only.txt for how to get the protein coding genes) for the identification of the distal peaks' closest gene - because we want to assign the peak to a gene and avoid it being assigned to a snRNA or pseudogene etc				
+
+looking at the TSS and genebody peaks for MSL2, the genes found are almost exclusively protein_coding so the initial analysis is fine and the results won't change much		
+However, to be correct I will run the intersectBed again a TSS and gene bed file that contain only the protein coding genes (based on protein_coding_ENSMUSG.txt). To get this bed files I used the R commands describe in 02-get_coding_genes_only.txt.		
+
+
+Procedure to prepare the bed files and perform the overlap with TSS and genes is found in: 		
+01-prepare_bed_files_readme.txt 		   
+02-get_coding_genes_only.txt		
+03-overlap_chip_peaks_with_genes_TSS_readme.txt				
+
+
+
+Now, let's get the genes that have a peak at TSS, genebody or distal
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#importing and preparing the DEgene files
+new.degenes = read.table(degenes_path, header = TRUE) #the DEgenes of patients vs control
+deseq.results = read.table(deseq_results_path, header = TRUE) #DEseq output of patients vs control (all genes)
+
+#add the mouse orthologues to the deseq.results
+deseq.results$mouse_ID = human_id_to_mouse_id(rownames(deseq.results)) #~42k of 63k entries have no assigned mouseID 
+new.degenes$mouse_ID = human_id_to_mouse_id(rownames(new.degenes))#94 entries out of 519 have no assigned mouseID
+
+###
+
+#importing and preparing the MACS peaks overlaps
+
+#Files of MACS peaks overlap with TSS or gene 
+peak_files = list.files(input_path, pattern = "*.tsv")
+peak.list = import_peaks.function(peak_files, input_path)
+
+
+#get the peaks that are in the gene body
+mcrs1_mlES_genebody = anti_join(peak.list$MCRS1_mlES_genes, peak.list$MCRS1_mlES_TSS, by = "V4")
+mof_mlES_genebody = anti_join(peak.list$MOF_mlES_genes, peak.list$MOF_mlES_TSS, by = "V4")
+mof_mlNPC_genebody = anti_join(peak.list$MOF_mlNPC_genes, peak.list$MOF_mlNPC_TSS, by = "V4")
+msl1_mlES_genebody = anti_join(peak.list$MSL1_mlES_genes, peak.list$MSL1_mlES_TSS, by = "V4")
+msl2_mlES_genebody = anti_join(peak.list$MSL2_mlES_genes, peak.list$MSL2_mlES_TSS, by = "V4")
+msl2_mlNPC_genebody = anti_join(peak.list$MSL2_mlNPC_genes, peak.list$MSL2_mlNPC_TSS, by = "V4")
+nsl3_mlES_genebody = anti_join(peak.list$NSL3_mlES_genes, peak.list$NSL3_mlES_TSS, by = "V4")
+nsl3_mlNPC_genebody = anti_join(peak.list$NSL3_mlNPC_genes, peak.list$NSL3_mlNPC_TSS, by = "V4")
+
+#took nsl3_mlES_genebody peaks - looks fine on IGV - continue
+
+#creating new list containing tss and genebody peaks
+peak.list = list(mcrs1_mlES_TSS = peak.list$MCRS1_mlES_TSS, 
+								 mcrs1_mlES_genebody = mcrs1_mlES_genebody,
+								 mof_mlES_TSS = peak.list$MOF_mlES_TSS,
+								 mof_mlES_genebody = mof_mlES_genebody,
+								 mof_mlNPC_TSS = peak.list$MOF_mlNPC_TSS,
+								 mof_mlNPC_genebody = mof_mlNPC_genebody,
+								 msl1_mlES_TSS = peak.list$MSL1_mlES_TSS,
+								 msl1_mlES_genebody = msl1_mlES_genebody,
+								 msl2_mlES_TSS = peak.list$MSL2_mlES_TSS,
+								 msl2_mlES_genebody = msl2_mlES_genebody,
+								 msl2_mlNPC_TSS = peak.list$MSL2_mlNPC_TSS,
+								 msl2_mlNPC_genebody = msl2_mlNPC_genebody,
+								 nsl3_mlES_TSS = peak.list$NSL3_mlES_TSS,
+								 nsl3_mlES_genebody = nsl3_mlES_genebody,
+								 nsl3_mlNPC_TSS = peak.list$NSL3_mlNPC_TSS,
+								 nsl3_mlNPC_genebody = nsl3_mlNPC_genebody)
+
+rm(mcrs1_mlES_genebody, mof_mlES_genebody, mof_mlNPC_genebody, msl1_mlES_genebody, msl2_mlES_genebody, msl2_mlNPC_genebody, nsl3_mlES_genebody, nsl3_mlNPC_genebody)
+
+#add the distal peaks 
+peak_files = list.files(input_distal_path, pattern = "*closest.tsv")
+distal.peak.list = import_peaks.function(peak_files, input_distal_path)
+
+peak.list = c(peak.list, distal.peak.list)
+
+rm(distal.peak.list)
+#keep only a single entry per MACS peak (since peak was assigned to several isoforms)
+peak.list = lapply(peak.list, function(x) {x[which(!duplicated(x$V4)),]})
+#count rows for each list element
+cat("Number of genes with TSS, genebody or distal peak in mouse")
+sapply(peak.list, function(x) nrow(x))
+# adding the numbers of TSS and genebody does not add up to the number of peaks per gene in the table above
+# the reason is that TSS overlaps are within plus minus 1kb so there are cases where the peak is found overlapping with TSS but not with the gene - but the numbers are not that high
+# this has been accounted for in the distal peaks where I used gene +1kb upstream of TSS (or downstream if gene is on minus strand)
+
+#get only those DEgenes that have an entry in TSS or genebody list
+deseq_bound_peak.list = list()
+deseq_bound_peak.list = lapply(peak.list, function(x) {deseq.results[which(deseq.results$mouse_ID %in% x$V9),]})
+#count rows for each list element
+cat("Number of DEgenes bound by individual MSL/NSL members at TSS, genebody or distal, where a human orthologue could be identified")
+sapply(deseq_bound_peak.list, function(x) nrow(x))
+#add a column with the name of the list element
+for (i in 1:length(deseq_bound_peak.list)){
+	deseq_bound_peak.list[[i]]$bound_by = names(deseq_bound_peak.list[i])
+}
+
+#plotting the log2FC of the DEgenes that have a peak at TSS or genebody
+temp = lapply(deseq_bound_peak.list, function(x) {x[,c(2,9)]})
+
+plotdata = do.call(rbind,temp)
+rm(temp)
+
+plotdata = plotdata[which(!is.na(plotdata$log2FoldChange)),]
+
+ggplot(plotdata, aes(x = bound_by, y = log2FoldChange, fill = bound_by)) +
+	geom_boxplot() +
+	ggtitle("log2FC ctr vs patients - TSS,genebody or distal bound genes") +
+	labs(x = "bound_by", y = "log2FC") +
+	theme(axis.text.x=element_blank())
+
+cat("The mean, median and sd of log2FC of the individual ChIP categories")
+plotdata %>% group_by(bound_by) %>% summarise(mean = mean(log2FoldChange), median = median(log2FoldChange),sd = sd(log2FoldChange))
+
+```
+
+###export
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+
+write.table(peak.list$mcrs1_mlES_TSS, "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$mof_mlES_TSS, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$mof_mlNPC_TSS, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl1_mlES_TSS, "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl2_mlES_TSS, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl2_mlNPC_TSS, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$nsl3_mlES_TSS, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$nsl3_mlNPC_TSS, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_TSS.tsv", sep = "\t", quote = FALSE, col.names = NA)
+###
+write.table(peak.list$mcrs1_mlES_genebody, "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$mof_mlES_genebody, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$mof_mlNPC_genebody, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl1_mlES_genebody, "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl2_mlES_genebody, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$msl2_mlNPC_genebody, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$nsl3_mlES_genebody, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$nsl3_mlNPC_genebody, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_genebody.tsv", sep = "\t", quote = FALSE, col.names = NA)
+###
+write.table(peak.list$MCRS1_mlES_closest, "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$MOF_mlES_closest, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$MOF_mlNPC_closest, "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$MSL1_mlES_closest, "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$MSL2_mlES_closest, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$MSL2_mlNPC_closest, "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$NSL3_mlES_closest, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.table(peak.list$NSL3_mlNPC_closest, "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_closest.tsv", sep = "\t", quote = FALSE, col.names = NA)
+###
+###
+write.xlsx2(x=peak.list$mcrs1_mlES_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$mof_mlES_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$mof_mlNPC_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl1_mlES_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl2_mlES_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl2_mlNPC_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$nsl3_mlES_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$nsl3_mlNPC_TSS, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_TSS.xlsx", row.names = TRUE, col.names = TRUE)
+###
+write.xlsx2(x=peak.list$mcrs1_mlES_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$mof_mlES_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$mof_mlNPC_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl1_mlES_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl2_mlES_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$msl2_mlNPC_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$nsl3_mlES_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$nsl3_mlNPC_genebody, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_genebody.xlsx", row.names = TRUE, col.names = TRUE)
+###
+write.xlsx2(x=peak.list$MCRS1_mlES_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MCRS1_mlES_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$MOF_mlES_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlES_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$MOF_mlNPC_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MOF_mlNPC_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$MSL1_mlES_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MSL1_mlES_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$MSL2_mlES_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlES_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$MSL2_mlNPC_closest, file = "DEgenes_ChIP_bound_TSS_genebody/MSL2_mlNPC_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$NSL3_mlES_closest, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlES_closest.xlsx", row.names = TRUE, col.names = TRUE)
+write.xlsx2(x=peak.list$NSL3_mlNPC_closest, file = "DEgenes_ChIP_bound_TSS_genebody/NSL3_mlNPC_closest.xlsx", row.names = TRUE, col.names = TRUE)
+###
+
+
+
+```
+
+###How many DEgenes are bound by MSL/NSL members?
+
+Back to Bash.		
+The whole procedure on getting the closest up- and downstream protein coding gene is described in 04-get_closest_distal_peak.txt.
+update 2018-03-07:		
+I will use the closest gene, regardless whether up- or downstream
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#crete an overview dataframe
+
+##protein_coding_ENSMUSG.txt generated as described in 02-get_coding_genes_only.txt
+protein_coding_ENSMUSG = read.table("protein_coding_ENSMUSG.txt", header = FALSE)
+protein_coding_ENSMUSG = data.frame(V1 = protein_coding_ENSMUSG[which(!duplicated(protein_coding_ENSMUSG$V1)),])
+protein_coding_ENSMUSG$V1 = gsub("\\..*", "", protein_coding_ENSMUSG$V1)
+
+overview = data.frame(matrix(nrow = length(protein_coding_ENSMUSG$V1), ncol = length(peak.list)))
+
+rownames(overview) = protein_coding_ENSMUSG$V1
+
+for (i in 1:length(peak.list)) {
+	overview[i] = ifelse(rownames(overview) %in% peak.list[[i]]$V9, "yes", "no")
+}
+
+for (i in 1:length(peak.list)) {
+	colnames(overview)[i] = names(peak.list[i])
+}
+
+#make a merged df where if at least one time the gene is bound at TSS, genebody or distal it marks it
+overview.merged = data.frame(row.names = rownames(overview))
+
+overview.merged$mcrs1_mlES = apply(overview[c(1,2,17)], 1, function(r) any(r %in% c("yes")))
+overview.merged$mof_mlES = apply(overview[c(3,4,18)], 1, function(r) any(r %in% c("yes")))
+overview.merged$mof_mlNPC = apply(overview[c(5,6,19)], 1, function(r) any(r %in% c("yes")))
+overview.merged$msl1_mlES = apply(overview[c(7,8,20)], 1, function(r) any(r %in% c("yes")))
+overview.merged$msl2_mlES = apply(overview[c(9,10,21)], 1, function(r) any(r %in% c("yes")))
+overview.merged$msl2_mlNPC = apply(overview[c(11,12,22)], 1, function(r) any(r %in% c("yes")))
+overview.merged$nsl3_mlES = apply(overview[c(13,14,23)], 1, function(r) any(r %in% c("yes")))
+overview.merged$nsl3_mlNPC = apply(overview[c(15,16,24)], 1, function(r) any(r %in% c("yes")))
+
+#for export
+#overview_export = overview.merged
+#overview_export$human_ID = mouse_id_to_human_id(rownames(overview_export))
+#overview_export$human_gene_name = human_id_to_human_gene_name(overview_export$human_ID)
+#overview_export[overview_export == TRUE] = "yes"
+#overview_export[overview_export == FALSE] = "no"
+#write.table(overview_export, "ChIP_bound_overview.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=overview_export, file = "ChIP_bound_overview.xlsx", row.names = TRUE, col.names = TRUE)
+#rm(overview_export)
+
+
+#####
+#for plotting need the same order as in the plot for DEgenes ctrl vs patient
+
+rld = read.table("../03-DESeq/02-dmso_ctrl_vs_patients/02-DEseq_output_rep2_and_4/DESeq2.counts_rlog.tsv", header = TRUE)
+
+plotdata = rld[as.character(rownames(new.degenes)),] 
+
+hc = hclust(as.dist(1-cor(t(as.matrix(plotdata)), method = "pearson")))
+heatmap.2(as.matrix(plotdata), scale="row", trace="none", dendrogram="both",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(100),
+					main=sprintf("All DE genes - Pearson"),
+					margins = c(8,10), keysize = 1,
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+
+#####
+
+#prepare the overview sheet to contain human ids and also those DEgenes that do not have orthologs so that the df can be ordered as hc and plotted in the same way as the DEgenes
+
+overview.merged$mouse_ID = rownames(overview.merged)
+new.degenes$human_ID = gsub("\\..*", "", rownames(new.degenes))
+
+new.degenes.overview = left_join(new.degenes, overview.merged,  by = "mouse_ID")
+temp = new.degenes.overview[,c(9:ncol(new.degenes.overview))]
+rownames(temp) = temp$human_ID
+temp$human_ID = NULL
+#replace TRUE with 1, FALSE with -1 and NA with 0
+temp[temp == TRUE] = 1
+temp[temp == FALSE] = -1
+temp[is.na(temp)] = 0
+
+plotdata = as.matrix(sapply(temp, as.numeric))
+rownames(plotdata) = rownames(temp)
+
+heatmap.2(plotdata, trace="none", dendrogram="both", Colv = FALSE,
+					margins = c(8,10), col = c("white", "lightgrey", "forestgreen"),
+					main = "DE down genes - ChIP binding",
+					cexRow=0.7, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+
+cat("-1 = not bound, 0 = no orthologue, 1 = bound")
+
+cat("Number of DEgenes bound by each member (irrespective of whether TSS, genebody or distal")
+colSums(temp==1)
+
+
+```
+
+###Upstream regulator
+
+upstream regulators identified in IPA based on DEgenes ctrl vs patients
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# 
+
+regulator = read.table("upstream_regulator_full_list.txt", sep = "\t", header = TRUE, na.strings=c("","NA"))
+
+regulator = data.frame(gene_name=regulator$Upstream.Regulator, zscore=regulator$Activation.z.score)
+
+#add human id to regulator file
+regulator$human_ids = human_gene_name_to_human_id(regulator$gene_name)
+# those that did not got found are having an NA z-score, so... fine
+regulator$mouse_ids = human_id_to_mouse_id(regulator$human_ids)
+
+regulator_overview.merged = overview.merged[which(rownames(overview.merged) %in% regulator$mouse_ids),]
+#126 out of 135 upstream regulators have ortholog found
+
+plotdata = as.matrix(sapply(regulator_overview.merged, as.numeric))
+rownames(plotdata) = rownames(regulator_overview.merged)
+
+heatmap.2(plotdata, trace="none", dendrogram="none", Colv = FALSE,
+					margins = c(8,10), col = c("white", "forestgreen"),
+					main = "Upstream regulator - bound=green",
+					cexRow=0.7, cexCol=0.9, density.info="none")
+
+#for export
+#regulator_export = regulator_overview.merged
+#regulator_export$human_ID = mouse_id_to_human_id(rownames(regulator_export))
+#regulator_export$human_gene_name = human_id_to_human_gene_name(regulator_export$human_ID)
+#regulator_export[regulator_export == TRUE] = "yes"
+#regulator_export[regulator_export == FALSE] = "no"
+#write.table(regulator_export, "ChIP_bound_upstream_regulators.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=regulator_export, file = "ChIP_bound_upstream_regulators.xlsx", row.names = TRUE, col.names = TRUE)
+#rm(regulator_export)
+#####
+
+#focus on those regulators with activation scores
+
+regulator_up = regulator[which(regulator$zscore>0),] #32
+regulator_down = regulator[which(regulator$zscore<=0),] #25
+
+regulator_up_overview.merged = regulator_overview.merged[which(rownames(regulator_overview.merged) %in% regulator_up$mouse_ids),]
+
+regulator_down_overview.merged = regulator_overview.merged[which(rownames(regulator_overview.merged) %in% regulator_down$mouse_ids),]
+#all up or down regulators have orthologs found
+
+plotdata = as.matrix(sapply(regulator_up_overview.merged, as.numeric))
+rownames(plotdata) = rownames(regulator_up_overview.merged)
+
+heatmap.2(plotdata, trace="none", dendrogram="none", Colv = FALSE,
+					margins = c(8,10), col = c("white", "forestgreen"),
+					main = "Upstream regulator - upregulated - binding=green",
+					cexRow=0.7, cexCol=0.9, density.info="none")
+
+
+plotdata = as.matrix(sapply(regulator_down_overview.merged, as.numeric))
+rownames(plotdata) = rownames(regulator_down_overview.merged)
+
+heatmap.2(plotdata, trace="none", dendrogram="none", Colv = FALSE,
+					margins = c(8,10), col = c("white", "forestgreen"),
+					main = "Upstream regulator - downregulated - binding=green",
+					cexRow=0.7, cexCol=0.9, density.info="none")
+
+#for export
+#regulator_export = regulator_up_overview.merged
+#regulator_export$human_ID = mouse_id_to_human_id(rownames(regulator_export))
+#regulator_export$human_gene_name = human_id_to_human_gene_name(regulator_export$human_ID)
+#regulator_export[regulator_export == TRUE] = "yes"
+#regulator_export[regulator_export == FALSE] = "no"
+#write.table(regulator_export, "ChIP_bound_upregulated_upstream_regulators.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=regulator_export, file = "ChIP_bound_upregulated_upstream_regulators.xlsx", row.names = TRUE, col.names = TRUE)
+#rm(regulator_export)
+
+#regulator_export = regulator_down_overview.merged
+#regulator_export$human_ID = mouse_id_to_human_id(rownames(regulator_export))
+#regulator_export$human_gene_name = human_id_to_human_gene_name(regulator_export$human_ID)
+#regulator_export[regulator_export == TRUE] = "yes"
+#regulator_export[regulator_export == FALSE] = "no"
+#write.table(regulator_export, "ChIP_bound_downregulated_upstream_regulators.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=regulator_export, file = "ChIP_bound_downregulated_upstream_regulators.xlsx", row.names = TRUE, col.names = TRUE)
+#rm(regulator_export)
+#####
+
+
+```
+
+###not DE anymore
+
+How many of the genes that were "rescued" upon PANO treatment are bound? 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#this is taken from a previous analysis running DEseq on dmso control vs pano patients
+notDEanymore = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/05-dmso_ctrl_vs_pano_patients/notDEanymore_log2FC.tsv", header = TRUE)
+
+#to have the same order for binding as in the heatmap for the notDEanymore, recreate the heatmap
+rld.dmso.pano = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/01-all-dmso-pano/DESeq2_output/all-dmso-pano/DESeq2.counts_rlog.tsv", header = TRUE)
+
+rld.dmso.pano = rld.dmso.pano[,c(2,4,10,12,18,20,26,28,14,16,22,24,30,32)]
+rld.dmso.pano = rld.dmso.pano[which(rownames(rld.dmso.pano) %in% rownames(notDEanymore)),]
+
+hc = hclust(as.dist(1-cor(t(as.matrix(rld.dmso.pano)), method = "pearson")))
+
+heatmap.2(as.matrix(rld.dmso.pano), 
+					Rowv = as.dendrogram(hc), Colv = FALSE, trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(10),
+					main=sprintf("notDEanymore - dmso vs pano - pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "row")
+####
+
+
+#prepare the overview sheet to contain human ids and also those DEgenes that do not have orthologs so that the df can be ordered as hc and plotted in the same way as the DEgenes
+
+notDEanymore$mouse_ID = human_id_to_mouse_id(rownames(notDEanymore))#22 out of 116 enries do not have a mouse orthologue
+notDEanymore$human_ID = gsub("\\..*", "", rownames(notDEanymore))
+
+notDEanymore.overview = left_join(notDEanymore, overview.merged,  by = "mouse_ID")
+temp = notDEanymore.overview[,c(8:ncol(notDEanymore.overview))]
+rownames(temp) = temp$human_ID
+temp$human_ID = NULL
+#replace TRUE with 1, FALSE with -1 and NA with 0
+temp[temp == TRUE] = 1
+temp[temp == FALSE] = -1
+temp[is.na(temp)] = 0
+
+plotdata = as.matrix(sapply(temp, as.numeric))
+rownames(plotdata) = rownames(temp)
+
+heatmap.2(plotdata, trace="none", dendrogram="both", Colv = FALSE,
+					margins = c(8,10), col = c("white", "lightgrey", "forestgreen"),
+					main = "DE down genes - ChIP binding",
+					cexRow=0.7, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+
+cat("-1 = not bound, 0 = no orthologue, 1 = bound")
+
+cat("Number of notDEanymore genes bound by each member (irrespective of whether TSS, genebody or distal")
+colSums(temp==1)
+
+#for export
+#notDEanymore_export = notDEanymore.overview
+#notDEanymore_export$human_gene_name = human_id_to_human_gene_name(notDEanymore_export$human_ID)
+#notDEanymore_export = notDEanymore_export[,c(9:16,8,17,7)]
+#notDEanymore_export[notDEanymore_export == TRUE] = "yes"
+#notDEanymore_export[notDEanymore_export == FALSE] = "no"
+#write.table(notDEanymore_export, "ChIP_bound_notDEanymore.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=notDEanymore_export, file = "ChIP_bound_notDEanymore.xlsx", row.names = TRUE, col.names = TRUE)
+#rm(notDEanymore_export)
+#####
+
+
+```
+
+
+### MSL/NSL binding on the heatmaps of DEgenes after PANO treatment
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#this is taken from a previous analysis running DEseq on dmso control vs pano patients
+notDEanymore = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/05-dmso_ctrl_vs_pano_patients/notDEanymore_log2FC.tsv", header = TRUE)
+
+#to have the same order for binding as in the heatmap for the notDEanymore, recreate the heatmap
+rld.dmso.pano = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/01-all-dmso-pano/DESeq2_output/all-dmso-pano/DESeq2.counts_rlog.tsv", header = TRUE)
+
+rld.dmso.pano = rld.dmso.pano[,c(2,4,10,12,18,20,26,28,14,16,22,24,30,32)]
+rld.dmso.pano = rld.dmso.pano[which(rownames(rld.dmso.pano) %in% rownames(notDEanymore)),]
+
+hc = hclust(as.dist(1-cor(t(as.matrix(rld.dmso.pano)), method = "pearson")))
+
+heatmap.2(as.matrix(rld.dmso.pano), 
+					Rowv = as.dendrogram(hc), Colv = FALSE, trace = "none", scale = "row",
+					col=colorRampPalette(rev(brewer.pal(9,"RdBu")))(10),
+					main=sprintf("notDEanymore - dmso vs pano - pearson"),
+					margins = c(8,1),
+					cexRow=0.5, cexCol=0.9, density.info="none",
+					dendrogram = "row")
+####
+
+
+#prepare the overview sheet to contain human ids and also those DEgenes that do not have orthologs so that the df can be ordered as hc and plotted in the same way as the DEgenes
+
+notDEanymore$mouse_ID = human_id_to_mouse_id(rownames(notDEanymore))#22 out of 116 enries do not have a mouse orthologue
+notDEanymore$human_ID = gsub("\\..*", "", rownames(notDEanymore))
+
+notDEanymore.overview = left_join(notDEanymore, overview.merged,  by = "mouse_ID")
+temp = notDEanymore.overview[,c(8:ncol(notDEanymore.overview))]
+rownames(temp) = temp$human_ID
+temp$human_ID = NULL
+#replace TRUE with 1, FALSE with -1 and NA with 0
+temp[temp == TRUE] = 1
+temp[temp == FALSE] = -1
+temp[is.na(temp)] = 0
+
+plotdata = as.matrix(sapply(temp, as.numeric))
+rownames(plotdata) = rownames(temp)
+
+heatmap.2(plotdata, trace="none", dendrogram="both", Colv = FALSE,
+					margins = c(8,10), col = c("white", "lightgrey", "forestgreen"),
+					main = "DE down genes - ChIP binding",
+					cexRow=0.7, cexCol=0.9, density.info="none",
+					Rowv = as.dendrogram(hc))
+
+cat("-1 = not bound, 0 = no orthologue, 1 = bound")
+
+cat("Number of notDEanymore genes bound by each member (irrespective of whether TSS, genebody or distal")
+colSums(temp==1)
+
+#for export
+notDEanymore_export = notDEanymore.overview
+notDEanymore_export$human_gene_name = human_id_to_human_gene_name(notDEanymore_export$human_ID)
+notDEanymore_export = notDEanymore_export[,c(9:16,8,17,7)]
+notDEanymore_export[notDEanymore_export == TRUE] = "yes"
+notDEanymore_export[notDEanymore_export == FALSE] = "no"
+write.table(notDEanymore_export, "ChIP_bound_notDEanymore.tsv", sep = "\t", quote = FALSE, col.names = NA)
+write.xlsx2(x=notDEanymore_export, file = "ChIP_bound_notDEanymore.xlsx", row.names = TRUE, col.names = TRUE)
+rm(notDEanymore_export)
+#####
+
+#claudia_overview = overview
+
+#claudia_overview$human_ID = mouse_id_to_human_id(rownames(claudia_overview))
+#claudia_overview$human_gene_name = human_id_to_human_gene_name(claudia_overview$human_ID)
+#write.table(claudia_overview, "ChIP_bound_overview_detailed.tsv", sep = "\t", quote = FALSE, col.names = NA)
+#write.xlsx2(x=claudia_overview, file = "ChIP_bound_overview_detailed.xlsx", row.names = TRUE, col.names = TRUE)
+
+```
+###A "fancy" pahtways figure
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+ipa_files = list.files("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/IPA-Disease_and_function/", pattern = "*.txt")
+
+ipa.list = list()
+#read the txt files into a list
+for (i in 1:length(ipa_files)){
+	ipa.list[[i]]<-read.table(file.path("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/04-overlap-with-ChIPseq/IPA-Disease_and_function/", ipa_files[i]), sep = "\t", header = TRUE)
+}
+
+names(ipa.list) = gsub("\\..*", "", ipa_files)
+
+ipa.list = lapply(ipa.list, function(i) {i[order(i$X, decreasing = TRUE),]})
+top.ipa = lapply(ipa.list, function(i) i[1,])
+
+#for some reason two dfs have a column "Flags" - removing them
+top.ipa$`amino metabolism`$Flags <- NULL
+top.ipa$`small molecule biochemestry`$Flags <- NULL
+plotdata = do.call(rbind,top.ipa)
+
+plotdata$logpvalue = -log10(plotdata$p.Value)
+
+ggplot(plotdata,aes(Diseases.or.Functions.Annotation,logpvalue, size = X, fill=Activation.z.score)) +
+	geom_point(alpha = 0.7, shape = 21) +
+	scale_size_area(max_size = 15) + theme_bw(base_size = 15) +
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+	labs(x = "Pathways", y = "-log10(p-value)",fill = "z score", title = "IPA")
+
+#ggsave(file=sprintf("IPA_versionA.pdf"), width=13, height=10)
+
+ggplot(plotdata,aes(Activation.z.score,logpvalue, size = X, fill = Activation.z.score)) +
+	geom_point(alpha = 0.7, shape = 21) +
+	geom_text_repel(aes(label=Diseases.or.Functions.Annotation), size = 4) +
+	scale_size_area(max_size = 15) + theme_bw(base_size = 15) +
+	scale_fill_gradient("red", "green") +
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+	labs(x = "Pathways", y = "-log10(p-value)",fill = "z score", title = "IPA")
+
+#ggsave(file=sprintf("IPA_versionB.pdf"), width=13, height=10)
+
+ggplot(plotdata,aes(rownames(plotdata),Activation.z.score, size = X, fill=logpvalue)) +
+	geom_point(alpha = 0.7, shape = 21) +
+	geom_text_repel(aes(label=Diseases.or.Functions.Annotation), size = 4) +
+	scale_size_area(max_size = 15) + theme_bw(base_size = 15) +
+	theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+	labs(x = "Pathways", y = "z score",fill = "-log10(p-value)", title = "IPA")
+
+ggsave(file=sprintf("IPA_versionD.pdf"), width=13, height=10)
+
+
+
+
+
+```

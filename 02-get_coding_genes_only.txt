@@ -1,0 +1,45 @@
+### get a list of protein coding genes
+
+#using the information in the gencode gtf file to get only ESMUSG of coding genes
+awk -F "\"" '{print $6}'  /data/repository/organisms/GRCm37_ensembl/gencode/m1/genes.gtf |sort -k1,1 | uniq
+
+#extracting only protein coding gene ids
+awk -F "\"" '{if($6=="protein_coding")print $0}'  /data/repository/organisms/GRCm37_ensembl/gencode/m1/genes.gtf > protein_coding.gtf
+
+awk -F "\"" '{print$2}' protein_coding.gtf > protein_coding_ENSMUSG.txt
+
+rm protein_coding.gtf
+
+####
+#remove duplicate entries
+#in R run:
+
+#remove dup entries from protein coding ENMUSG list
+
+#bla = read.table("protein_coding_ENSMUSG.txt", header = FALSE)
+#bla = data.frame(V1 = bla[which(!duplicated(bla$V1)),])
+#bla$V1 = gsub("\\..*", "", bla$V1)
+
+#get only TSS and genes found in ENSMUSG list
+
+#genes = read.table("GRCm37_release67_genes.bed", header = FALSE)
+#tss = read.table("GRCm37_release67_TSS_pm1kb.bed", header = FALSE)
+#genes_p = read.table("GRCm37_release67_genes_plus1KBupstream.bed", header = FALSE)
+
+#genes = genes[which(genes$V4 %in% bla$V1),]
+#tss = tss[which(tss$V4 %in% bla$V1),]
+#genes_p = genes_p[which(genes_p$V4 %in% bla$V1),]
+
+#export
+
+#write.table(tss, "GRCm37_release67_coding_TSS_pm1kb.bed", quote = FALSE, col.names = FALSE, row.names = FALSE, sep = "\t")
+#write.table(genes, "GRCm37_release67_coding_genes.bed", quote = FALSE, col.names = FALSE, row.names = FALSE, sep = "\t")
+#write.table(genes_p, "GRCm37_release67_coding_genes_plus1KBupstream.bed", quote = FALSE, col.names = FALSE, row.names = FALSE, sep = "\t")
+
+#####
+
+#cleanup
+#rm(bla, genes, tss, genes_p)
+
+####
+

@@ -1,0 +1,80 @@
+---
+title: "Msl3 patients - HDACi treatment - EX"
+author: "Giuseppe Semplicio"
+date: "1/31/2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(UpSetR)
+library(ggplot2)
+library(dplyr)
+library(xlsx)
+
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+ctrl_de_up = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/controls/all_reps/DESeq2.de_up.tsv", header = TRUE, sep = "\t")
+ctrl_de_down = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/controls/all_reps/DESeq2.de_down.tsv", header = TRUE, sep = "\t")
+
+ctrl_rep12_de_up = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/controls/rep1_and_2/DESeq2.de_up.tsv", header = TRUE, sep = "\t")
+ctrl_rep12_de_down = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/controls/rep1_and_2/DESeq2.de_down.tsv", header = TRUE, sep = "\t")
+
+p1_de_up = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/patients/all_reps/DESeq2.de_up.tsv", header = TRUE, sep = "\t")
+p1_de_down = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/patients/all_reps/DESeq2.de_down.tsv", header = TRUE, sep = "\t")
+
+p1_rep12_de_up = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/patients/rep1_and_2/DESeq2.de_up.tsv", header = TRUE, sep = "\t")
+p1_rep12_de_down = read.table("/data/akhtar/group/Giuseppe/14-Felicia_RNAseq_HDACinhibitors_Msl3patients/03-DESeq/03-dmso-vs-EX/patients/rep1_and_2/DESeq2.de_down.tsv", header = TRUE, sep = "\t")
+```
+
+Common up- and downregulated genes between DMSO and EX treatment - three replicates
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+degenes.merged = list(control_up = ctrl_de_up$gene_names, 
+											control_down = ctrl_de_down$gene_names,
+											p1_up = p1_de_up$gene_names, 
+											p1_down = p1_de_down$gene_names)
+
+upset(fromList(degenes.merged), 
+			nsets = 20, 
+			sets = c("control_up", "p1_up", "control_down", "p1_down"),
+			keep.order = TRUE, 
+			order.by = "degree")
+
+common_ctrl_p1_up = inner_join(ctrl_de_up, p1_de_up, by = "gene_names")
+common_ctrl_p1_down = inner_join(ctrl_de_down, p1_de_down, by = "gene_names")
+
+write.table(common_ctrl_p1_up,"common_DEgenes_ctrl_p1_up.tsv", sep="\t", quote=FALSE, col.names=NA)
+write.xlsx2(x = common_ctrl_p1_up, file = "common_DEgenes_ctrl_p1_up.xlsx", row.names = TRUE, col.names = TRUE)
+
+write.table(common_ctrl_p1_down,"common_DEgenes_ctrl_p1_down.tsv", sep="\t", quote=FALSE, col.names=NA)
+write.xlsx2(x = common_ctrl_p1_down, file = "common_DEgenes_ctrl_p1_down.xlsx", row.names = TRUE, col.names = TRUE)
+```
+
+Common up- and downregulated genes between DMSO and EX treatment - replicates 1 and 2 only
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+degenes.merged = list(control_rep1and2_up = ctrl_rep12_de_up$gene_names, 
+											control_rep1and2_down = ctrl_rep12_de_down$gene_names,
+										  p1_rep1and2_up = p1_rep12_de_up$gene_names, 
+											p1_rep1and2_down = p1_rep12_de_down$gene_names)
+
+upset(fromList(degenes.merged), 
+			nsets = 20, 
+			sets = c("control_rep1and2_up", "p1_rep1and2_up","control_rep1and2_down", "p1_rep1and2_down"),
+			keep.order = TRUE, 
+			order.by = "degree")
+
+common_ctrl_p1_rep12_up = inner_join(ctrl_rep12_de_up, p1_rep12_de_up, by = "gene_names")
+common_ctrl_p1_rep12_down = inner_join(ctrl_rep12_de_down, p1_rep12_de_down, by = "gene_names")
+
+write.table(common_ctrl_p1_rep12_up,"common_DEgenes_ctrl_p1_rep12_up.tsv", sep="\t", quote=FALSE, col.names=NA)
+write.xlsx2(x = common_ctrl_p1_rep12_up, file = "common_DEgenes_ctrl_p1_rep12_up.xlsx", row.names = TRUE, col.names = TRUE)
+
+write.table(common_ctrl_p1_rep12_down,"common_DEgenes_ctrl_p1_rep12_down.tsv", sep="\t", quote=FALSE, col.names=NA)
+write.xlsx2(x = common_ctrl_p1_rep12_down, file = "common_DEgenes_ctrl_p1_rep12_down.xlsx", row.names = TRUE, col.names = TRUE)
+
+```
